@@ -1,6 +1,6 @@
 <div align = center>
 
-<img src="https://raw.githubusercontent.com/hyprwm/Hyprland/main/assets/header.svg" width="750" height="300" alt="banner">
+<img src="https://raw.githubusercontent.com/Soccera1/skibidiland/main/assets/header.svg" width="750" height="300" alt="banner">
 
 <br>
 
@@ -13,7 +13,7 @@
 
 <br>
 
-Hyprland is a 100% independent, dynamic tiling Wayland compositor that doesn't sacrifice on its looks.
+Skibidiland is a 100% independent, dynamic tiling Wayland compositor that doesn't sacrifice on its looks.
 
 It provides the latest Wayland features, is highly customizable, has all the eyecandy, the most powerful plugins,
 easy IPC, much more QoL stuff than other compositors and more...
@@ -85,7 +85,7 @@ easy IPC, much more QoL stuff than other compositors and more...
 
 <br>
 
-**[wlroots]** - *For powering Hyprland in the past*
+**[wlroots]** - *For powering skibidiland in the past*
 
 **[tinywl]** - *For showing how 2 do stuff*
 
@@ -100,17 +100,17 @@ easy IPC, much more QoL stuff than other compositors and more...
 
 <!----------------------------------------------------------------------------->
 
-[Configure]: https://wiki.hyprland.org/Configuring/
-[Stars]: https://starchart.cc/hyprwm/Hyprland
-[Hypr]: https://github.com/hyprwm/Hypr
+[Configure]: https://wiki.skibidiland.org/Configuring/
+[Stars]: https://starchart.cc/Soccera1/skibidiland
+[Hypr]: https://github.com/Soccera1/Hypr
 
-[Pull Requests]: https://github.com/hyprwm/Hyprland/pulls
-[Issues]: https://github.com/hyprwm/Hyprland/issues
-[Todo]: https://github.com/hyprwm/Hyprland/projects?type=beta
+[Pull Requests]: https://github.com/Soccera1/skibidiland/pulls
+[Issues]: https://github.com/Soccera1/skibidiland/issues
+[Todo]: https://github.com/Soccera1/skibidiland/projects?type=beta
 
-[Contribute]: https://wiki.hyprland.org/Contributing-and-Debugging/
-[Install]: https://wiki.hyprland.org/Getting-Started/Installation/
-[Quick Start]: https://wiki.hyprland.org/Getting-Started/Master-Tutorial/
+[Contribute]: https://wiki.skibidiland.org/Contributing-and-Debugging/
+[Install]: https://wiki.skibidiland.org/Getting-Started/Installation/
+[Quick Start]: https://wiki.skibidiland.org/Getting-Started/Master-Tutorial/
 [License]: LICENSE
 
 
@@ -126,17 +126,17 @@ easy IPC, much more QoL stuff than other compositors and more...
 <!----------------------------------{ Images }--------------------------------->
 
 [Preview A]: https://i.ibb.co/C1yTb0r/falf.png
-[Preview B]: https://linfindel.github.io/cdn/hyprland-preview-b.png
+[Preview B]: https://linfindel.github.io/cdn/skibidiland-preview-b.png
 [Preview C]: https://i.ibb.co/B3GJg28/20221126-20h53m26s-grim.png
 
 
 <!----------------------------------{ Badges }--------------------------------->
 
-[Badge Workflow]: https://github.com/hyprwm/Hyprland/actions/workflows/ci.yaml/badge.svg
+[Badge Workflow]: https://github.com/Soccera1/skibidiland/actions/workflows/ci.yaml/badge.svg
 
-[Badge Issues]: https://img.shields.io/github/issues/hyprwm/Hyprland
-[Badge Pull Requests]: https://img.shields.io/github/issues-pr/hyprwm/Hyprland
-[Badge Language]: https://img.shields.io/github/languages/top/hyprwm/Hyprland
-[Badge License]: https://img.shields.io/github/license/hyprwm/Hyprland
-[Badge Lines]: https://img.shields.io/tokei/lines/github/hyprwm/Hyprland
+[Badge Issues]: https://img.shields.io/github/issues/Soccera1/skibidiland
+[Badge Pull Requests]: https://img.shields.io/github/issues-pr/Soccera1/skibidiland
+[Badge Language]: https://img.shields.io/github/languages/top/Soccera1/skibidiland
+[Badge License]: https://img.shields.io/github/license/Soccera1/skibidiland
+[Badge Lines]: https://img.shields.io/tokei/lines/github/Soccera1/skibidiland
 [Badge Hi Mom]: https://img.shields.io/badge/Hi-mom!-ff69b4
