@@ -1,6 +1,6 @@
 wayland_protos = dependency(
 	'wayland-protocols',
-	version: '>=1.32',
+	version: '>=1.41',
 	fallback: 'wayland-protocols',
 	default_options: ['tests=false'],
 )
@@ -71,6 +71,7 @@ protocols = [
 	wayland_protocol_dir / 'staging/single-pixel-buffer/single-pixel-buffer-v1.xml',
 	wayland_protocol_dir / 'staging/security-context/security-context-v1.xml',
 	wayland_protocol_dir / 'staging/content-type/content-type-v1.xml',
+	wayland_protocol_dir / 'staging/color-management/color-management-v1.xml',
 ]
 
 wl_protocols = []
@@ -86,7 +87,7 @@ foreach protocol : protocols
 endforeach
 
 # wayland.xml generation
-wayland_scanner = dependency('wayland-scanner')
+wayland_scanner = dependency('wayland-scanner', native: true)
 wayland_scanner_datadir = wayland_scanner.get_variable('pkgdatadir')
 
 wayland_xml = wayland_scanner_datadir / 'wayland.xml'

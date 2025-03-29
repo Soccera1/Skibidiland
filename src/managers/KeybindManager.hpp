@@ -199,9 +199,11 @@ class CKeybindManager {
     static SDispatchResult circleNext(std::string);
     static SDispatchResult focusWindow(std::string);
     static SDispatchResult tagWindow(std::string);
+    static SDispatchResult toggleSwallow(std::string);
     static SDispatchResult setSubmap(std::string);
     static SDispatchResult pass(std::string);
     static SDispatchResult sendshortcut(std::string);
+    static SDispatchResult sendkeystate(std::string);
     static SDispatchResult layoutmsg(std::string);
     static SDispatchResult dpms(std::string);
     static SDispatchResult swapnext(std::string);

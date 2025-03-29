@@ -20,6 +20,7 @@
 
 #include "Server.hpp"
 #include "XWayland.hpp"
+#include "config/ConfigValue.hpp"
 #include "debug/Log.hpp"
 #include "../defines.hpp"
 #include "../Compositor.hpp"
@@ -32,31 +33,45 @@ constexpr int          SOCKET_BACKLOG         = 1;
 constexpr int          MAX_SOCKET_RETRIES     = 32;
 constexpr int          LOCK_FILE_MODE         = 0444;
 
-static CFileDescriptor createSocket(struct sockaddr_un* addr, size_t path_size) {
-    socklen_t       size = offsetof(struct sockaddr_un, sun_path) + path_size + 1;
-    CFileDescriptor fd{socket(AF_UNIX, SOCK_STREAM, 0)};
+static CFileDescriptor createSocket(struct sockaddr_un* addr, size_t pathSize) {
+    const bool        isRegularSocket(addr->sun_path[0]);
+    const char        dbgSocketPathPrefix = isRegularSocket ? addr->sun_path[0] : '@';
+    const char* const dbgSocketPathRem    = addr->sun_path + 1;
+
+    socklen_t         size = offsetof(struct sockaddr_un, sun_path) + pathSize + 1;
+    CFileDescriptor   fd{socket(AF_UNIX, SOCK_STREAM, 0)};
     if (!fd.isValid()) {
-        Debug::log(ERR, "Failed to create socket {}{}", addr->sun_path[0] ? addr->sun_path[0] : '@', addr->sun_path + 1);
+        Debug::log(ERR, "Failed to create socket {}{}", dbgSocketPathPrefix, dbgSocketPathRem);
         return {};
     }
 
     if (!fd.setFlags(fd.getFlags() | FD_CLOEXEC)) {
+        Debug::log(ERR, "Failed to set flags for socket {}{}", dbgSocketPathPrefix, dbgSocketPathRem);
         return {};
     }
 
-    if (addr->sun_path[0])
+    if (isRegularSocket)
         unlink(addr->sun_path);
 
     if (bind(fd.get(), (struct sockaddr*)addr, size) < 0) {
-        Debug::log(ERR, "Failed to bind socket {}{}", addr->sun_path[0] ? addr->sun_path[0] : '@', addr->sun_path + 1);
-        if (addr->sun_path[0])
+        Debug::log(ERR, "Failed to bind socket {}{}", dbgSocketPathPrefix, dbgSocketPathRem);
+        if (isRegularSocket)
             unlink(addr->sun_path);
         return {};
     }
 
+    // Required for the correct functioning of `xhost` #9574
+    // The operation is safe because XWayland controls socket access by itself
+    // and rejects connections not matched by the `xhost` ACL
+    if (isRegularSocket && chmod(addr->sun_path, 0666) < 0) {
+        // We are only extending the default permissions,
+        // and I don't see the reason to make a full stop in case of a failed operation.
+        Debug::log(ERR, "Failed to set permission mode for socket {}{}", dbgSocketPathPrefix, dbgSocketPathRem);
+    }
+
     if (listen(fd.get(), SOCKET_BACKLOG) < 0) {
-        Debug::log(ERR, "Failed to listen to socket {}{}", addr->sun_path[0] ? addr->sun_path[0] : '@', addr->sun_path + 1);
-        if (addr->sun_path[0])
+        Debug::log(ERR, "Failed to listen to socket {}{}", dbgSocketPathPrefix, dbgSocketPathRem);
+        if (isRegularSocket)
             unlink(addr->sun_path);
         return {};
     }
@@ -113,14 +128,32 @@ static std::string getSocketPath(int display, bool isLinux) {
 }
 
 static bool openSockets(std::array<CFileDescriptor, 2>& sockets, int display) {
+    static auto CREATEABSTRACTSOCKET = CConfigValue<Hyprlang::INT>("xwayland:create_abstract_socket");
+
     if (!ensureSocketDirExists())
         return false;
 
     sockaddr_un addr = {.sun_family = AF_UNIX};
     std::string path;
 
+#ifdef __linux__
+    if (*CREATEABSTRACTSOCKET) {
+        // cursed...
+        // but is kept as an option for better compatibility
+        addr.sun_path[0] = 0;
+        path             = getSocketPath(display, true);
+        strncpy(addr.sun_path + 1, path.c_str(), path.length() + 1);
+    } else {
+        path = getSocketPath(display, false);
+        strncpy(addr.sun_path, path.c_str(), path.length() + 1);
+    }
+#else
+    if (*CREATEABSTRACTSOCKET) {
+        Debug::log(WARN, "The abstract XWayland Unix domain socket might be used only on Linux systems. A regular one'll be created insted.");
+    }
     path = getSocketPath(display, false);
     strncpy(addr.sun_path, path.c_str(), path.length() + 1);
+#endif
 
     sockets[0] = CFileDescriptor{createSocket(&addr, path.length())};
     if (!sockets[0].isValid())
@@ -144,8 +177,7 @@ static void startServer(void* data) {
 }
 
 static int xwaylandReady(int fd, uint32_t mask, void* data) {
-    CFileDescriptor xwlFd{fd};
-    return g_pXWayland->pServer->ready(std::move(xwlFd), mask);
+    return g_pXWayland->pServer->ready(fd, mask);
 }
 
 static bool safeRemove(const std::string& path) {
@@ -220,12 +252,10 @@ CXWaylandServer::~CXWaylandServer() {
     safeRemove(lockPath);
 
     std::string path;
-#ifdef __linux__
-    path = getSocketPath(display, true);
-#else
-    path = getSocketPath(display, false);
-#endif
-    safeRemove(path);
+    for (bool isLinux : {true, false}) {
+        path = getSocketPath(display, isLinux);
+        safeRemove(path);
+    }
 }
 
 void CXWaylandServer::die() {
@@ -322,7 +352,7 @@ bool CXWaylandServer::start() {
         return false;
     }
 
-    waylandFDs[0].take(); // does this leak?
+    waylandFDs[0].take(); // wl_client owns this fd now
 
     int notify[2] = {-1, -1};
     if (pipe(notify) < 0) {
@@ -342,43 +372,29 @@ bool CXWaylandServer::start() {
     pipeSource = wl_event_loop_add_fd(g_pCompositor->m_sWLEventLoop, notifyFds[0].get(), WL_EVENT_READABLE, ::xwaylandReady, nullptr);
     pipeFd     = std::move(notifyFds[0]);
 
-    serverPID = fork();
+    auto serverPID = fork();
     if (serverPID < 0) {
         Debug::log(ERR, "fork failed");
         die();
         return false;
     } else if (serverPID == 0) {
-        pid_t pid = fork();
-        if (pid < 0) {
-            Debug::log(ERR, "second fork failed");
-            _exit(1);
-        } else if (pid == 0)
-            runXWayland(notifyFds[1]);
-
+        runXWayland(notifyFds[1]);
         _exit(0);
     }
 
     return true;
 }
 
-int CXWaylandServer::ready(CFileDescriptor fd, uint32_t mask) {
+int CXWaylandServer::ready(int fd, uint32_t mask) {
     if (mask & WL_EVENT_READABLE) {
         // xwayland writes twice
         char    buf[64];
-        ssize_t n = read(fd.get(), buf, sizeof(buf));
+        ssize_t n = read(fd, buf, sizeof(buf));
         if (n < 0 && errno != EINTR) {
             Debug::log(ERR, "Xwayland: read from displayFd failed");
             mask = 0;
         } else if (n <= 0 || buf[n - 1] != '\n')
             return 1;
-    }
-
-    while (waitpid(serverPID, nullptr, 0) < 0) {
-        if (errno == EINTR)
-            continue;
-        Debug::log(ERR, "Xwayland: waitpid for fork failed");
-        g_pXWayland->pServer.reset();
-        return 1;
     }
 
     // if we don't have readable here, it failed
@@ -391,6 +407,7 @@ int CXWaylandServer::ready(CFileDescriptor fd, uint32_t mask) {
     Debug::log(LOG, "XWayland is ready");
 
     wl_event_source_remove(pipeSource);
+    pipeFd.reset();
     pipeSource = nullptr;
 
     // start the wm

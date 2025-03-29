@@ -13,6 +13,7 @@
 #include "managers/SeatManager.hpp"
 #include "managers/VersionKeeperManager.hpp"
 #include "managers/DonationNagManager.hpp"
+#include "managers/ANRManager.hpp"
 #include "managers/eventLoop/EventLoopManager.hpp"
 #include <algorithm>
 #include <aquamarine/output/Output.hpp>
@@ -69,10 +70,13 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/resource.h>
+#include <malloc.h>
+#include <unistd.h>
 
 using namespace Hyprutils::String;
 using namespace Aquamarine;
 using enum NContentType::eContentType;
+using namespace NColorManagement;
 
 static int handleCritSignal(int signo, void* data) {
     Debug::log(LOG, "Hyprland received signal {}", signo);
@@ -162,9 +166,21 @@ void CCompositor::restoreNofile() {
         Debug::log(ERR, "Failed restoring NOFILE limits");
 }
 
+void CCompositor::setMallocThreshold() {
+#ifdef M_TRIM_THRESHOLD
+    // The default is 128 pages,
+    // which is very large and can lead to a lot of memory used for no reason
+    // because trimming hasn't happened
+    static const int PAGESIZE = sysconf(_SC_PAGESIZE);
+    mallopt(M_TRIM_THRESHOLD, 6 * PAGESIZE);
+#endif
+}
+
 CCompositor::CCompositor(bool onlyConfig) : m_bOnlyConfigVerification(onlyConfig), m_iHyprlandPID(getpid()) {
     if (onlyConfig)
         return;
+
+    setMallocThreshold();
 
     m_szHyprTempDataRoot = std::string{getenv("XDG_RUNTIME_DIR")} + "/hypr";
 
@@ -372,7 +388,6 @@ void CCompositor::initServer(std::string socketName, int socketFd) {
     }
 
     setenv("WAYLAND_DISPLAY", m_szWLDisplaySocket.c_str(), 1);
-    setenv("XDG_SESSION_TYPE", "wayland", 1);
     if (!getenv("XDG_CURRENT_DESKTOP")) {
         setenv("XDG_CURRENT_DESKTOP", "Hyprland", 1);
         m_bDesktopEnvSet = true;
@@ -579,6 +594,7 @@ void CCompositor::cleanup() {
     g_pEventLoopManager.reset();
     g_pVersionKeeperMgr.reset();
     g_pDonationNagManager.reset();
+    g_pANRManager.reset();
     g_pConfigWatcher.reset();
 
     if (m_pAqBackend)
@@ -680,6 +696,9 @@ void CCompositor::initManagers(eManagersInitStage stage) {
 
             Debug::log(LOG, "Creating the DonationNag!");
             g_pDonationNagManager = makeUnique<CDonationNagManager>();
+
+            Debug::log(LOG, "Creating the ANRManager!");
+            g_pANRManager = makeUnique<CANRManager>();
 
             Debug::log(LOG, "Starting XWayland");
             g_pXWayland = makeUnique<CXWayland>(g_pCompositor->m_bWantsXwayland);
@@ -796,6 +815,11 @@ PHLMONITOR CCompositor::getMonitorFromCursor() {
 }
 
 PHLMONITOR CCompositor::getMonitorFromVector(const Vector2D& point) {
+    if (m_vMonitors.empty()) {
+        Debug::log(WARN, "getMonitorFromVector called with empty monitor list");
+        return nullptr;
+    }
+
     PHLMONITOR mon;
     for (auto const& m : m_vMonitors) {
         if (CBox{m->vecPosition, m->vecSize}.containsPoint(point)) {
@@ -1189,6 +1213,9 @@ void CCompositor::focusWindow(PHLWINDOW pWindow, SP<CWLSurfaceResource> pSurface
 
     if (*PFOLLOWMOUSE == 0)
         g_pInputManager->sendMotionEventsToFocused();
+
+    if (pWindow->m_sGroupData.pNextWindow)
+        pWindow->deactivateGroupMembers();
 }
 
 void CCompositor::focusSurface(SP<CWLSurfaceResource> pSurface, PHLWINDOW pWindowOwner) {
@@ -1245,7 +1272,7 @@ void CCompositor::focusSurface(SP<CWLSurfaceResource> pSurface, PHLWINDOW pWindo
 SP<CWLSurfaceResource> CCompositor::vectorToLayerPopupSurface(const Vector2D& pos, PHLMONITOR monitor, Vector2D* sCoords, PHLLS* ppLayerSurfaceFound) {
     for (auto const& lsl : monitor->m_aLayerSurfaceLayers | std::views::reverse) {
         for (auto const& ls : lsl | std::views::reverse) {
-            if (ls->fadingOut || !ls->layerSurface || (ls->layerSurface && !ls->layerSurface->mapped) || ls->alpha->value() == 0.f)
+            if (!ls->mapped || ls->fadingOut || !ls->layerSurface || (ls->layerSurface && !ls->layerSurface->mapped) || ls->alpha->value() == 0.f)
                 continue;
 
             auto SURFACEAT = ls->popupHead->at(pos, true);
@@ -1263,7 +1290,7 @@ SP<CWLSurfaceResource> CCompositor::vectorToLayerPopupSurface(const Vector2D& po
 
 SP<CWLSurfaceResource> CCompositor::vectorToLayerSurface(const Vector2D& pos, std::vector<PHLLSREF>* layerSurfaces, Vector2D* sCoords, PHLLS* ppLayerSurfaceFound) {
     for (auto const& ls : *layerSurfaces | std::views::reverse) {
-        if (ls->fadingOut || !ls->layerSurface || (ls->layerSurface && !ls->layerSurface->surface->mapped) || ls->alpha->value() == 0.f)
+        if (!ls->mapped || ls->fadingOut || !ls->layerSurface || (ls->layerSurface && !ls->layerSurface->surface->mapped) || ls->alpha->value() == 0.f)
             continue;
 
         auto [surf, local] = ls->layerSurface->surface->at(pos - ls->geometry.pos(), true);
@@ -2188,7 +2215,8 @@ void CCompositor::moveWorkspaceToMonitor(PHLWORKSPACE pWorkspace, PHLMONITOR pMo
     // finalize
     if (POLDMON) {
         g_pLayoutManager->getCurrentLayout()->recalculateMonitor(POLDMON->ID);
-        updateFullscreenFadeOnWorkspace(POLDMON->activeWorkspace);
+        if (valid(POLDMON->activeWorkspace))
+            updateFullscreenFadeOnWorkspace(POLDMON->activeWorkspace);
         updateSuspendedStates();
     }
 
@@ -2216,6 +2244,9 @@ bool CCompositor::workspaceIDOutOfBounds(const WORKSPACEID& id) {
 }
 
 void CCompositor::updateFullscreenFadeOnWorkspace(PHLWORKSPACE pWorkspace) {
+
+    if (!pWorkspace)
+        return;
 
     const auto FULLSCREEN = pWorkspace->m_bHasFullscreenWindow;
 
@@ -2327,7 +2358,7 @@ void CCompositor::setWindowFullscreenState(const PHLWINDOW PWINDOW, SFullscreenS
 
     updateFullscreenFadeOnWorkspace(PWORKSPACE);
 
-    PWINDOW->sendWindowSize(PWINDOW->m_vRealSize->goal(), true);
+    PWINDOW->sendWindowSize(true);
 
     PWORKSPACE->forceReportSizesToWindows();
 
@@ -2596,7 +2627,13 @@ PHLWORKSPACE CCompositor::createNewWorkspace(const WORKSPACEID& id, const MONITO
 
     const bool SPECIAL = id >= SPECIAL_WORKSPACE_START && id <= -2;
 
-    const auto PWORKSPACE = m_vWorkspaces.emplace_back(CWorkspace::create(id, getMonitorFromID(monID), NAME, SPECIAL, isEmpty));
+    const auto PMONITOR = getMonitorFromID(monID);
+    if (!PMONITOR) {
+        Debug::log(ERR, "BUG THIS: No pMonitor for new workspace in createNewWorkspace");
+        return nullptr;
+    }
+
+    const auto PWORKSPACE = m_vWorkspaces.emplace_back(CWorkspace::create(id, PMONITOR, NAME, SPECIAL, isEmpty));
 
     PWORKSPACE->m_fAlpha->setValueAndWarp(0);
 
@@ -2672,6 +2709,9 @@ void CCompositor::moveWindowToWorkspaceSafe(PHLWINDOW pWindow, PHLWORKSPACE pWor
         return;
 
     if (pWindow->m_bPinned && pWorkspace->m_bIsSpecialWorkspace)
+        return;
+
+    if (pWindow->m_pWorkspace == pWorkspace)
         return;
 
     const bool FULLSCREEN     = pWindow->isFullscreen();
@@ -3005,8 +3045,10 @@ void CCompositor::onNewMonitor(SP<Aquamarine::IOutput> output) {
     g_pHyprRenderer->damageMonitor(PNEWMONITOR);
     PNEWMONITOR->onMonitorFrame();
 
-    if (PROTO::colorManagement && shouldChangePreferredImageDescription())
-        PROTO::colorManagement->onImagePreferredChanged();
+    if (PROTO::colorManagement && shouldChangePreferredImageDescription()) {
+        Debug::log(ERR, "FIXME: color management protocol is enabled, need a preferred image description id");
+        PROTO::colorManagement->onImagePreferredChanged(0);
+    }
 }
 
 SImageDescription CCompositor::getPreferredImageDescription() {
@@ -3024,34 +3066,58 @@ bool CCompositor::shouldChangePreferredImageDescription() {
     return false;
 }
 
-void CCompositor::ensurePersistentWorkspacesPresent(const std::vector<SWorkspaceRule>& rules) {
+void CCompositor::ensurePersistentWorkspacesPresent(const std::vector<SWorkspaceRule>& rules, PHLWORKSPACE pWorkspace) {
+    if (!m_pLastMonitor)
+        return;
+
     for (const auto& rule : rules) {
         if (!rule.isPersistent)
             continue;
 
+        PHLWORKSPACE PWORKSPACE = nullptr;
+        if (pWorkspace) {
+            if (pWorkspace->matchesStaticSelector(rule.workspaceString))
+                PWORKSPACE = pWorkspace;
+            else
+                continue;
+        }
+
         const auto PMONITOR = getMonitorFromString(rule.monitor);
+
+        if (!rule.monitor.empty() && !PMONITOR)
+            continue; // don't do anything yet, as the monitor is not yet present.
+
+        if (!PWORKSPACE) {
+            WORKSPACEID id     = rule.workspaceId;
+            std::string wsname = rule.workspaceName;
+
+            if (id == WORKSPACE_INVALID) {
+                const auto R = getWorkspaceIDNameFromString(rule.workspaceString);
+                id           = R.id;
+                wsname       = R.name;
+            }
+
+            if (id == WORKSPACE_INVALID) {
+                Debug::log(ERR, "ensurePersistentWorkspacesPresent: couldn't resolve id for workspace {}", rule.workspaceString);
+                continue;
+            }
+            PWORKSPACE = getWorkspaceByID(id);
+            if (!PWORKSPACE)
+                createNewWorkspace(id, PMONITOR ? PMONITOR->ID : m_pLastMonitor->ID, wsname, false);
+        }
+
+        if (PWORKSPACE)
+            PWORKSPACE->m_bPersistent = true;
 
         if (!PMONITOR) {
             Debug::log(ERR, "ensurePersistentWorkspacesPresent: couldn't resolve monitor for {}, skipping", rule.monitor);
             continue;
         }
 
-        WORKSPACEID id     = rule.workspaceId;
-        std::string wsname = rule.workspaceName;
-        if (id == WORKSPACE_INVALID) {
-            const auto R = getWorkspaceIDNameFromString(rule.workspaceString);
-            id           = R.id;
-            wsname       = R.name;
-        }
-
-        if (id == WORKSPACE_INVALID) {
-            Debug::log(ERR, "ensurePersistentWorkspacesPresent: couldn't resolve id for workspace {}", rule.workspaceString);
-            continue;
-        }
-
-        if (const auto PWORKSPACE = getWorkspaceByID(id); PWORKSPACE) {
+        if (PWORKSPACE) {
             if (PWORKSPACE->m_pMonitor == PMONITOR) {
                 Debug::log(LOG, "ensurePersistentWorkspacesPresent: workspace persistent {} already on {}", rule.workspaceString, PMONITOR->szName);
+
                 continue;
             }
 
@@ -3059,8 +3125,6 @@ void CCompositor::ensurePersistentWorkspacesPresent(const std::vector<SWorkspace
             moveWorkspaceToMonitor(PWORKSPACE, PMONITOR);
             continue;
         }
-
-        createNewWorkspace(id, PMONITOR ? PMONITOR : m_pLastMonitor.lock(), wsname, false);
     }
 
     // cleanup old

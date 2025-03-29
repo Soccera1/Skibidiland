@@ -20,7 +20,7 @@ class CXWaylandServer {
     bool start();
 
     // called on ready
-    int  ready(Hyprutils::OS::CFileDescriptor fd, uint32_t mask);
+    int  ready(int fd, uint32_t mask);
 
     void die();
 
@@ -33,8 +33,6 @@ class CXWaylandServer {
   private:
     bool                                          tryOpenSockets();
     void                                          runXWayland(Hyprutils::OS::CFileDescriptor& notifyFD);
-
-    pid_t                                         serverPID = 0;
 
     std::string                                   displayName;
     int                                           display = -1;

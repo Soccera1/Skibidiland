@@ -198,6 +198,8 @@ struct SWindowData {
 
     CWindowOverridableVar<CGradientValueData> activeBorderColor;
     CWindowOverridableVar<CGradientValueData> inactiveBorderColor;
+
+    CWindowOverridableVar<bool>               persistentSize;
 };
 
 struct SInitialWorkspaceToken {
@@ -355,7 +357,8 @@ class CWindow {
 
     // swallowing
     PHLWINDOWREF m_pSwallowed;
-    bool         m_bGroupSwallowed = false;
+    bool         m_bCurrentlySwallowed = false;
+    bool         m_bGroupSwallowed     = false;
 
     // focus stuff
     bool m_bStayFocused = false;
@@ -386,6 +389,9 @@ class CWindow {
 
     // window tags
     CTagKeeper m_tags;
+
+    // ANR
+    PHLANIMVAR<float> m_notRespondingTint;
 
     // For the list lookup
     bool operator==(const CWindow& rhs) const {
@@ -459,7 +465,7 @@ class CWindow {
     void                       onFocusAnimUpdate();
     void                       onUpdateState();
     void                       onUpdateMeta();
-    void                       onX11Configure(CBox box);
+    void                       onX11ConfigureRequest(CBox box);
     void                       onResourceChangeX11();
     std::string                fetchTitle();
     std::string                fetchClass();
@@ -470,9 +476,16 @@ class CWindow {
     bool                       isModal();
     Vector2D                   requestedMinSize();
     Vector2D                   requestedMaxSize();
-    void                       sendWindowSize(Vector2D size, bool force = false, std::optional<Vector2D> overridePos = std::nullopt);
+    Vector2D                   realToReportSize();
+    Vector2D                   realToReportPosition();
+    Vector2D                   xwaylandSizeToReal(Vector2D size);
+    Vector2D                   xwaylandPositionToReal(Vector2D size);
+    void                       updateX11SurfaceScale();
+    void                       sendWindowSize(bool force = false);
     NContentType::eContentType getContentType();
     void                       setContentType(NContentType::eContentType contentType);
+    void                       deactivateGroupMembers();
+    bool                       isNotResponding();
 
     CBox                       getWindowMainSurfaceBox() const {
         return {m_vRealPosition->value().x, m_vRealPosition->value().y, m_vRealSize->value().x, m_vRealSize->value().y};
@@ -495,7 +508,7 @@ class CWindow {
         CHyprSignalListener commit;
         CHyprSignalListener destroy;
         CHyprSignalListener activate;
-        CHyprSignalListener configure;
+        CHyprSignalListener configureRequest;
         CHyprSignalListener setGeometry;
         CHyprSignalListener updateState;
         CHyprSignalListener updateMetadata;
@@ -528,6 +541,42 @@ inline bool validMapped(PHLWINDOWREF w) {
         return false;
     return w->m_bIsMapped;
 }
+
+namespace NWindowProperties {
+    static const std::unordered_map<std::string, std::function<CWindowOverridableVar<bool>*(const PHLWINDOW&)>> boolWindowProperties = {
+        {"allowsinput", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.allowsInput; }},
+        {"dimaround", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.dimAround; }},
+        {"decorate", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.decorate; }},
+        {"focusonactivate", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.focusOnActivate; }},
+        {"keepaspectratio", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.keepAspectRatio; }},
+        {"nearestneighbor", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.nearestNeighbor; }},
+        {"noanim", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.noAnim; }},
+        {"noblur", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.noBlur; }},
+        {"noborder", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.noBorder; }},
+        {"nodim", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.noDim; }},
+        {"nofocus", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.noFocus; }},
+        {"nomaxsize", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.noMaxSize; }},
+        {"norounding", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.noRounding; }},
+        {"noshadow", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.noShadow; }},
+        {"noshortcutsinhibit", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.noShortcutsInhibit; }},
+        {"opaque", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.opaque; }},
+        {"forcergbx", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.RGBX; }},
+        {"syncfullscreen", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.syncFullscreen; }},
+        {"immediate", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.tearing; }},
+        {"xray", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.xray; }},
+    };
+
+    const std::unordered_map<std::string, std::function<CWindowOverridableVar<int>*(const PHLWINDOW&)>> intWindowProperties = {
+        {"rounding", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.rounding; }},
+        {"bordersize", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.borderSize; }},
+    };
+
+    const std::unordered_map<std::string, std::function<CWindowOverridableVar<float>*(PHLWINDOW)>> floatWindowProperties = {
+        {"roundingpower", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.roundingPower; }},
+        {"scrollmouse", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.scrollMouse; }},
+        {"scrolltouchpad", [](const PHLWINDOW& pWindow) { return &pWindow->m_sWindowData.scrollTouchpad; }},
+    };
+};
 
 /**
     format specification

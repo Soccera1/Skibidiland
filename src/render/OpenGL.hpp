@@ -9,6 +9,7 @@
 #include "../helpers/sync/SyncTimeline.hpp"
 #include <cstdint>
 #include <list>
+#include <string>
 #include <unordered_map>
 #include <map>
 
@@ -27,6 +28,7 @@
 #include <hyprutils/os/FileDescriptor.hpp>
 
 #include "../debug/TracyDefines.hpp"
+#include "../protocols/core/Compositor.hpp"
 
 struct gbm_device;
 class CHyprRenderer;
@@ -77,6 +79,26 @@ enum eMonitorExtraRenderFBs : uint8_t {
     FB_MONITOR_RENDER_EXTRA_BLUR,
 };
 
+struct SPreparedShaders {
+    std::string TEXVERTSRC;
+    std::string TEXVERTSRC300;
+    std::string TEXVERTSRC320;
+    CShader     m_shQUAD;
+    CShader     m_shRGBA;
+    CShader     m_shPASSTHRURGBA;
+    CShader     m_shMATTE;
+    CShader     m_shRGBX;
+    CShader     m_shEXT;
+    CShader     m_shBLUR1;
+    CShader     m_shBLUR2;
+    CShader     m_shBLURPREPARE;
+    CShader     m_shBLURFINISH;
+    CShader     m_shSHADOW;
+    CShader     m_shBORDER1;
+    CShader     m_shGLITCH;
+    CShader     m_shCM;
+};
+
 struct SMonitorRenderData {
     CFramebuffer offloadFB;
     CFramebuffer mirrorFB;     // these are used for some effects,
@@ -89,67 +111,51 @@ struct SMonitorRenderData {
 
     bool         blurFBDirty        = true;
     bool         blurFBShouldRender = false;
-
-    // Shaders
-    bool    m_bShadersInitialized = false;
-    CShader m_shQUAD;
-    CShader m_shRGBA;
-    CShader m_shPASSTHRURGBA;
-    CShader m_shMATTE;
-    CShader m_shRGBX;
-    CShader m_shEXT;
-    CShader m_shBLUR1;
-    CShader m_shBLUR2;
-    CShader m_shBLURPREPARE;
-    CShader m_shBLURFINISH;
-    CShader m_shSHADOW;
-    CShader m_shBORDER1;
-    CShader m_shGLITCH;
-    //
 };
 
 struct SCurrentRenderData {
-    PHLMONITORREF       pMonitor;
-    Mat3x3              projection;
-    Mat3x3              savedProjection;
-    Mat3x3              monitorProjection;
+    PHLMONITORREF          pMonitor;
+    Mat3x3                 projection;
+    Mat3x3                 savedProjection;
+    Mat3x3                 monitorProjection;
 
-    SMonitorRenderData* pCurrentMonData = nullptr;
-    CFramebuffer*       currentFB       = nullptr; // current rendering to
-    CFramebuffer*       mainFB          = nullptr; // main to render to
-    CFramebuffer*       outFB           = nullptr; // out to render to (if offloaded, etc)
+    SMonitorRenderData*    pCurrentMonData = nullptr;
+    CFramebuffer*          currentFB       = nullptr; // current rendering to
+    CFramebuffer*          mainFB          = nullptr; // main to render to
+    CFramebuffer*          outFB           = nullptr; // out to render to (if offloaded, etc)
 
-    CRegion             damage;
-    CRegion             finalDamage; // damage used for funal off -> main
+    CRegion                damage;
+    CRegion                finalDamage; // damage used for funal off -> main
 
-    SRenderModifData    renderModif;
-    float               mouseZoomFactor    = 1.f;
-    bool                mouseZoomUseMouse  = true; // true by default
-    bool                useNearestNeighbor = false;
-    bool                blockScreenShader  = false;
-    bool                simplePass         = false;
+    SRenderModifData       renderModif;
+    float                  mouseZoomFactor    = 1.f;
+    bool                   mouseZoomUseMouse  = true; // true by default
+    bool                   useNearestNeighbor = false;
+    bool                   blockScreenShader  = false;
+    bool                   simplePass         = false;
 
-    Vector2D            primarySurfaceUVTopLeft     = Vector2D(-1, -1);
-    Vector2D            primarySurfaceUVBottomRight = Vector2D(-1, -1);
+    Vector2D               primarySurfaceUVTopLeft     = Vector2D(-1, -1);
+    Vector2D               primarySurfaceUVBottomRight = Vector2D(-1, -1);
 
-    CBox                clipBox = {}; // scaled coordinates
-    CRegion             clipRegion;
+    CBox                   clipBox = {}; // scaled coordinates
+    CRegion                clipRegion;
 
-    uint32_t            discardMode    = DISCARD_OPAQUE;
-    float               discardOpacity = 0.f;
+    uint32_t               discardMode    = DISCARD_OPAQUE;
+    float                  discardOpacity = 0.f;
 
-    PHLLSREF            currentLS;
-    PHLWINDOWREF        currentWindow;
+    PHLLSREF               currentLS;
+    PHLWINDOWREF           currentWindow;
+    WP<CWLSurfaceResource> surface;
 };
 
 class CEGLSync {
   public:
     ~CEGLSync();
 
-    EGLSyncKHR                      sync = nullptr;
+    EGLSyncKHR                       sync = nullptr;
 
-    Hyprutils::OS::CFileDescriptor& fd();
-    bool                            wait();
+    Hyprutils::OS::CFileDescriptor&& takeFD();
+    Hyprutils::OS::CFileDescriptor&  fd();
 
   private:
     CEGLSync() = default;
@@ -175,7 +181,7 @@ class CHyprOpenGLImpl {
     void renderRectWithDamage(const CBox&, const CHyprColor&, const CRegion& damage, int round = 0, float roundingPower = 2.0f);
     void renderTexture(SP<CTexture>, const CBox&, float a, int round = 0, float roundingPower = 2.0f, bool discardActive = false, bool allowCustomUV = false);
     void renderTextureWithDamage(SP<CTexture>, const CBox&, const CRegion& damage, float a, int round = 0, float roundingPower = 2.0f, bool discardActive = false,
-                                 bool allowCustomUV = false, SP<CSyncTimeline> waitTimeline = nullptr, uint64_t waitPoint = 0);
+                                 bool allowCustomUV = false);
     void renderTextureWithBlur(SP<CTexture>, const CBox&, float a, SP<CWLSurfaceResource> pSurface, int round = 0, float roundingPower = 2.0f, bool blockBlurOptimization = false,
                                float blurA = 1.f, float overallA = 1.f);
     void renderRoundedShadow(const CBox&, int round, float roundingPower, int range, const CHyprColor& color, float a = 1.0);
@@ -228,12 +234,13 @@ class CHyprOpenGLImpl {
     uint32_t                             getPreferredReadFormat(PHLMONITOR pMonitor);
     std::vector<SDRMFormat>              getDRMFormats();
     EGLImageKHR                          createEGLImage(const Aquamarine::SDMABUFAttrs& attrs);
-    SP<CEGLSync>                         createEGLSync(Hyprutils::OS::CFileDescriptor fenceFD);
-    bool                                 waitForTimelinePoint(SP<CSyncTimeline> timeline, uint64_t point);
+    SP<CEGLSync>                         createEGLSync(int fence = -1);
+
+    bool                                 initShaders();
+    bool                                 m_bShadersInitialized = false;
+    SP<SPreparedShaders>                 m_shaders;
 
     SCurrentRenderData                   m_RenderData;
-
-    GLint                                m_iCurrentOutputFb = 0;
 
     Hyprutils::OS::CFileDescriptor       m_iGBMFD;
     gbm_device*                          m_pGbmDevice   = nullptr;
@@ -277,6 +284,14 @@ class CHyprOpenGLImpl {
     } m_sExts;
 
   private:
+    enum eEGLContextVersion : uint8_t {
+        EGL_CONTEXT_GLES_2_0 = 0,
+        EGL_CONTEXT_GLES_3_0,
+        EGL_CONTEXT_GLES_3_2,
+    };
+
+    eEGLContextVersion      m_eglContextVersion = EGL_CONTEXT_GLES_3_2;
+
     std::list<GLuint>       m_lBuffers;
     std::list<GLuint>       m_lTextures;
 
@@ -291,17 +306,17 @@ class CHyprOpenGLImpl {
     bool                    m_bApplyFinalShader     = false;
     bool                    m_bBlend                = false;
     bool                    m_bOffloadedFramebuffer = false;
+    bool                    m_bCMSupported          = true;
 
     CShader                 m_sFinalScreenShader;
     CTimer                  m_tGlobalTimer;
 
     SP<CTexture>            m_pMissingAssetTexture, m_pBackgroundTexture, m_pLockDeadTexture, m_pLockDead2Texture, m_pLockTtyTextTexture; // TODO: don't always load lock
 
-    void                    logShaderError(const GLuint&, bool program = false);
-    GLuint                  createProgram(const std::string&, const std::string&, bool dynamic = false);
-    GLuint                  compileShader(const GLuint&, std::string, bool dynamic = false);
+    void                    logShaderError(const GLuint&, bool program = false, bool silent = false);
+    GLuint                  createProgram(const std::string&, const std::string&, bool dynamic = false, bool silent = false);
+    GLuint                  compileShader(const GLuint&, std::string, bool dynamic = false, bool silent = false);
     void                    createBGTextureForMonitor(PHLMONITOR);
-    void                    initShaders();
     void                    initDRMFormats();
     void                    initEGL(bool gbm);
     EGLDeviceEXT            eglDeviceFromDRMFD(int drmFD);
@@ -314,8 +329,11 @@ class CHyprOpenGLImpl {
     // returns the out FB, can be either Mirror or MirrorSwap
     CFramebuffer* blurMainFramebufferWithDamage(float a, CRegion* damage);
 
+    void          passCMUniforms(const CShader&, const NColorManagement::SImageDescription& imageDescription, const NColorManagement::SImageDescription& targetImageDescription,
+                                 bool modifySDR = false);
+    void          passCMUniforms(const CShader&, const NColorManagement::SImageDescription& imageDescription);
     void renderTextureInternalWithDamage(SP<CTexture>, const CBox& box, float a, const CRegion& damage, int round = 0, float roundingPower = 2.0f, bool discardOpaque = false,
-                                         bool noAA = false, bool allowCustomUV = false, bool allowDim = false, SP<CSyncTimeline> = nullptr, uint64_t waitPoint = 0);
+                                         bool noAA = false, bool allowCustomUV = false, bool allowDim = false);
     void renderTexturePrimitive(SP<CTexture> tex, const CBox& box);
     void renderSplash(cairo_t* const, cairo_surface_t* const, double offset, const Vector2D& size);
 

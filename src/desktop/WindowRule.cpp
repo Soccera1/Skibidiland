@@ -5,7 +5,7 @@
 #include "../config/ConfigManager.hpp"
 
 static const auto RULES = std::unordered_set<std::string>{
-    "float", "fullscreen", "maximize", "noinitialfocus", "pin", "stayfocused", "tile", "renderunfocused",
+    "float", "fullscreen", "maximize", "noinitialfocus", "pin", "stayfocused", "tile", "renderunfocused", "persistentsize",
 };
 static const auto RULES_PREFIX = std::unordered_set<std::string>{
     "animation", "bordercolor",   "bordersize", "center",    "content", "fullscreenstate", "group",    "idleinhibit",   "maxsize",     "minsize",
@@ -16,9 +16,9 @@ static const auto RULES_PREFIX = std::unordered_set<std::string>{
 CWindowRule::CWindowRule(const std::string& rule, const std::string& value, bool isV2, bool isExecRule) : szValue(value), szRule(rule), v2(isV2), execRule(isExecRule) {
     const auto VALS  = CVarList(rule, 2, ' ');
     const bool VALID = RULES.contains(rule) || std::any_of(RULES_PREFIX.begin(), RULES_PREFIX.end(), [&rule](auto prefix) { return rule.starts_with(prefix); }) ||
-        (g_pConfigManager->mbWindowProperties.find(VALS[0]) != g_pConfigManager->mbWindowProperties.end()) ||
-        (g_pConfigManager->miWindowProperties.find(VALS[0]) != g_pConfigManager->miWindowProperties.end()) ||
-        (g_pConfigManager->mfWindowProperties.find(VALS[0]) != g_pConfigManager->mfWindowProperties.end());
+        (NWindowProperties::boolWindowProperties.find(VALS[0]) != NWindowProperties::boolWindowProperties.end()) ||
+        (NWindowProperties::intWindowProperties.find(VALS[0]) != NWindowProperties::intWindowProperties.end()) ||
+        (NWindowProperties::floatWindowProperties.find(VALS[0]) != NWindowProperties::floatWindowProperties.end());
 
     if (!VALID)
         return;
@@ -39,6 +39,8 @@ CWindowRule::CWindowRule(const std::string& rule, const std::string& value, bool
         ruleType = RULE_TILE;
     else if (rule == "renderunfocused")
         ruleType = RULE_RENDERUNFOCUSED;
+    else if (rule == "persistentsize")
+        ruleType = RULE_PERSISTENTSIZE;
     else if (rule.starts_with("animation"))
         ruleType = RULE_ANIMATION;
     else if (rule.starts_with("bordercolor"))
@@ -80,9 +82,9 @@ CWindowRule::CWindowRule(const std::string& rule, const std::string& value, bool
     else {
         // check if this is a prop.
         const CVarList VARS(rule, 0, 's', true);
-        if (g_pConfigManager->miWindowProperties.find(VARS[0]) != g_pConfigManager->miWindowProperties.end() ||
-            g_pConfigManager->mbWindowProperties.find(VARS[0]) != g_pConfigManager->mbWindowProperties.end() ||
-            g_pConfigManager->mfWindowProperties.find(VARS[0]) != g_pConfigManager->mfWindowProperties.end()) {
+        if (NWindowProperties::intWindowProperties.find(VARS[0]) != NWindowProperties::intWindowProperties.end() ||
+            NWindowProperties::boolWindowProperties.find(VARS[0]) != NWindowProperties::boolWindowProperties.end() ||
+            NWindowProperties::floatWindowProperties.find(VARS[0]) != NWindowProperties::floatWindowProperties.end()) {
             *const_cast<std::string*>(&szRule) = "prop " + rule;
             ruleType                           = RULE_PROP;
             Debug::log(LOG, "CWindowRule: direct prop rule found, rewritten {} -> {}", rule, szRule);
